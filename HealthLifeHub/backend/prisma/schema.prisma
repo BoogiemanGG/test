@@ -1,0 +1,294 @@
+// HealthLifeHub Database Schema
+// Provider: PostgreSQL via Supabase
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────
+// USER & PROFILE
+// ─────────────────────────────────────────
+
+model User {
+  id         String   @id @default(uuid())
+  email      String   @unique
+  password   String
+  name       String
+  avatarUrl  String?
+  isPro      Boolean  @default(false)
+  proExpiry  DateTime?
+  language   String   @default("en")  // user preferred language
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  profile       UserProfile?
+  diaryEntries  DiaryEntry[]
+  savedRecipes  SavedRecipe[]
+  pantryItems   PantryItem[]
+  exercises     ExerciseEntry[]
+  weeklyReports WeeklyReport[]
+  shoppingList  ShoppingItem[]
+
+  @@map("users")
+}
+
+model UserProfile {
+  id             String   @id @default(uuid())
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  age            Int?
+  gender         String?
+  weightKg       Float?
+  heightCm       Float?
+  activityLevel  String   @default("moderate")  // sedentary/light/moderate/active/very_active
+  goal           String   @default("maintain")  // lose_weight/maintain/gain_muscle
+  calorieTarget  Int      @default(2000)
+  dietPlan       String   @default("mediterranean")  // dash/mediterranean/flexitarian/keto/vegan
+  allergies      String[] @default([])
+  organicMode    Boolean  @default(false)
+  updatedAt      DateTime @updatedAt
+
+  @@map("user_profiles")
+}
+
+// ─────────────────────────────────────────
+// FOOD DATABASE
+// ─────────────────────────────────────────
+
+model Food {
+  id             String   @id @default(uuid())
+  externalId     String?  @unique
+  name           String
+  brand          String?
+  barcode        String?  @unique
+  // Macros per 100g
+  calories100g   Float    @default(0)
+  protein100g    Float    @default(0)
+  carbs100g      Float    @default(0)
+  fat100g        Float    @default(0)
+  fiber100g      Float    @default(0)
+  sugar100g      Float    @default(0)
+  sodium100mg    Float    @default(0)
+  // Micronutrients per 100g
+  vitaminC       Float?
+  vitaminD       Float?
+  iron           Float?
+  calcium        Float?
+  omega3         Float?
+  potassium      Float?
+  magnesium      Float?
+  // Diet compatibility scores (0-100)
+  dashScore      Int      @default(50)
+  medScore       Int      @default(50)
+  flexScore      Int      @default(50)
+  // Metadata
+  isOrganic      Boolean  @default(false)
+  seasonMonths   Int[]    @default([])  // [6,7,8] = in season Jun/Jul/Aug
+  imageUrl       String?
+  createdAt      DateTime @default(now())
+
+  diaryEntries        DiaryEntry[]
+  recipeIngredients   RecipeIngredient[]
+  pantryItems         PantryItem[]
+  shoppingItems       ShoppingItem[]
+
+  @@map("foods")
+}
+
+// ─────────────────────────────────────────
+// DIARY (INVISIBLE LOG)
+// ─────────────────────────────────────────
+
+model DiaryEntry {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  foodId     String?
+  food       Food?    @relation(fields: [foodId], references: [id])
+  recipeId   String?
+  recipe     Recipe?  @relation(fields: [recipeId], references: [id])
+  mealType   String   // breakfast/lunch/dinner/snack
+  quantityG  Float    @default(100)
+  calories   Float
+  proteinG   Float    @default(0)
+  carbsG     Float    @default(0)
+  fatG       Float    @default(0)
+  sodiumMg   Float    @default(0)
+  fiberG     Float    @default(0)
+  photoUrl   String?
+  loggedAt   DateTime @default(now())
+  location   String?  // home/restaurant/work
+  mood       String?  // happy/stressed/bored/hungry/neutral
+  notes      String?
+
+  @@map("diary_entries")
+}
+
+// ─────────────────────────────────────────
+// RECIPES
+// ─────────────────────────────────────────
+
+model Recipe {
+  id               String   @id @default(uuid())
+  externalId       String?  @unique
+  title            String
+  imageUrl         String?
+  prepTimeMins     Int      @default(0)
+  cookTimeMins     Int      @default(0)
+  servings         Int      @default(2)
+  caloriesServing  Float
+  proteinServing   Float    @default(0)
+  carbsServing     Float    @default(0)
+  fatServing       Float    @default(0)
+  fiberServing     Float    @default(0)
+  sodiumServing    Float    @default(0)
+  // Diet flags
+  dietDash         Boolean  @default(false)
+  dietMed          Boolean  @default(false)
+  dietFlex         Boolean  @default(false)
+  dietKeto         Boolean  @default(false)
+  dietVegan        Boolean  @default(false)
+  dietGlutenFree   Boolean  @default(false)
+  // Metadata
+  difficulty       String   @default("easy")   // easy/medium/hard
+  cuisine          String?
+  isOrganic        Boolean  @default(false)
+  instructions     String?
+  tags             String[] @default([])
+  createdAt        DateTime @default(now())
+
+  ingredients  RecipeIngredient[]
+  savedBy      SavedRecipe[]
+  diaryEntries DiaryEntry[]
+
+  @@map("recipes")
+}
+
+model RecipeIngredient {
+  id             String  @id @default(uuid())
+  recipeId       String
+  recipe         Recipe  @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  foodId         String?
+  food           Food?   @relation(fields: [foodId], references: [id])
+  ingredientName String
+  quantity       Float
+  unit           String  // g/ml/cup/tbsp/piece
+  isOptional     Boolean @default(false)
+
+  @@map("recipe_ingredients")
+}
+
+model SavedRecipe {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recipeId    String
+  recipe      Recipe   @relation(fields: [recipeId], references: [id])
+  rating      Int?     // 1-5
+  timesCooked Int      @default(0)
+  notes       String?
+  savedAt     DateTime @default(now())
+
+  @@unique([userId, recipeId])
+  @@map("saved_recipes")
+}
+
+// ─────────────────────────────────────────
+// PANTRY / FRIDGE INVENTORY
+// ─────────────────────────────────────────
+
+model PantryItem {
+  id             String   @id @default(uuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  foodId         String?
+  food           Food?    @relation(fields: [foodId], references: [id])
+  itemName       String
+  quantityG      Float    @default(0)
+  unit           String   @default("g")
+  photoUrl       String?
+  expiryDate     DateTime?
+  freshnessScore Int      @default(100)  // 0-100 AI estimated
+  addedAt        DateTime @default(now())
+  usedAt         DateTime?
+
+  @@map("pantry_items")
+}
+
+// ─────────────────────────────────────────
+// EXERCISE LOG
+// ─────────────────────────────────────────
+
+model ExerciseEntry {
+  id             String   @id @default(uuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exerciseType   String   // walk/run/cycle/gym/swim/yoga/stairs/sport
+  durationMins   Int
+  caloriesBurned Float
+  distanceKm     Float?
+  steps          Int?
+  // IMU / sensor data
+  avgPace        Float?
+  loadDetected   Boolean  @default(false)   // weighted walk/carry detected
+  loadMultiplier Float    @default(1.0)     // calorie multiplier for load
+  // Acoustic / effort estimation
+  avgHeartRate   Int?
+  effortLevel    String?  // light/moderate/intense/max
+  loggedAt       DateTime @default(now())
+  notes          String?
+
+  @@map("exercise_entries")
+}
+
+// ─────────────────────────────────────────
+// WEEKLY REPORT
+// ─────────────────────────────────────────
+
+model WeeklyReport {
+  id                  String   @id @default(uuid())
+  userId              String
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  weekStart           DateTime
+  avgDailyCalories    Float    @default(0)
+  goalHitDays         Int      @default(0)
+  topFood             String?
+  weakestDay          String?
+  bestDay             String?
+  healthMomentumScore Int      @default(50)  // 0-100
+  dietAdherencePct    Float    @default(0)
+  plantVarietyCount   Int      @default(0)
+  organicPct          Float    @default(0)
+  hydrationAvgMl      Float    @default(0)
+  personalityLabel    String?  // "Protein Chaser" / "Carbivore" / "Plant Lover"
+  aiInsight           String?  // Claude-generated weekly summary
+  createdAt           DateTime @default(now())
+
+  @@map("weekly_reports")
+}
+
+// ─────────────────────────────────────────
+// SHOPPING LIST
+// ─────────────────────────────────────────
+
+model ShoppingItem {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  foodId      String?
+  food        Food?    @relation(fields: [foodId], references: [id])
+  itemName    String
+  quantity    Float    @default(1)
+  unit        String   @default("piece")
+  reason      String?  // expiry_replacement/recipe_ingredient/restock/manual
+  isOrganic   Boolean  @default(false)
+  isPurchased Boolean  @default(false)
+  addedAt     DateTime @default(now())
+
+  @@map("shopping_items")
+}

@@ -1,0 +1,67 @@
+{
+  "expo": {
+    "name": "HealthLifeHub",
+    "slug": "healthlifehub",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F172A"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.healthlifehub.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "HealthLifeHub needs camera access to analyze your food and fridge.",
+        "NSMicrophoneUsageDescription": "HealthLifeHub uses the microphone for voice questions to your AI coach.",
+        "NSMotionUsageDescription": "HealthLifeHub uses motion sensors to track your activity and calorie burn.",
+        "NSLocationWhenInUseUsageDescription": "HealthLifeHub uses your location to suggest seasonal local foods.",
+        "NSHealthShareUsageDescription": "HealthLifeHub reads your step count and workout data from Apple Health.",
+        "NSHealthUpdateUsageDescription": "HealthLifeHub writes your nutrition data to Apple Health."
+      },
+      "entitlements": {
+        "com.apple.developer.healthkit": true
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0F172A"
+      },
+      "package": "com.healthlifehub.app",
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACTIVITY_RECOGNITION",
+        "BODY_SENSORS"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-localization",
+      [
+        "expo-camera",
+        { "cameraPermission": "Allow HealthLifeHub to access your camera to analyze food." }
+      ],
+      [
+        "expo-barcode-scanner",
+        { "cameraPermission": "Allow HealthLifeHub to scan food barcodes." }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "scheme": "healthlifehub"
+  }
+}
