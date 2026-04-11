@@ -45,8 +45,11 @@ export default function PantryScreen() {
         <TouchableOpacity style={styles.scanBtn} onPress={() => router.push('/camera/FridgeMode')}>
           <Text style={styles.scanBtnText}>📸 {t('pantry.scanFridge')}</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={styles.receiptBtn} onPress={() => router.push('/camera/ReceiptMode')}>
+          <Text style={styles.receiptBtnText}>🧾 Receipt</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={styles.addBtn} onPress={() => router.push('/pantry/AddItem')}>
-          <Text style={styles.addBtnText}>+ {t('pantry.addItem')}</Text>
+          <Text style={styles.addBtnText}>+</Text>
         </TouchableOpacity>
       </View>
 
@@ -115,7 +118,9 @@ const styles = StyleSheet.create({
   actionBar: { flexDirection: 'row', gap: SPACING.sm, padding: SPACING.base },
   scanBtn: { flex: 2, backgroundColor: COLORS.primary, borderRadius: RADIUS.md, padding: SPACING.md, alignItems: 'center' },
   scanBtnText: { color: '#fff', fontWeight: '700', fontSize: FONTS.sizes.base },
-  addBtn: { flex: 1, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, padding: SPACING.md, alignItems: 'center' },
+  receiptBtn: { flex: 1, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, padding: SPACING.md, alignItems: 'center', borderWidth: 1, borderColor: COLORS.primary },
+  receiptBtnText: { color: COLORS.primary, fontWeight: '600', fontSize: FONTS.sizes.sm },
+  addBtn: { width: 48, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, padding: SPACING.md, alignItems: 'center' },
   addBtnText: { color: COLORS.textPrimary, fontWeight: '600', fontSize: FONTS.sizes.base },
   expiryBanner: { marginHorizontal: SPACING.base, backgroundColor: '#7C2D12', borderRadius: RADIUS.md, padding: SPACING.md, flexDirection: 'row', justifyContent: 'space-between', marginBottom: SPACING.sm },
   expiryBannerText: { color: '#FCA5A5', fontWeight: '600' },

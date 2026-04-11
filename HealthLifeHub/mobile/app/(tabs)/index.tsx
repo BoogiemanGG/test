@@ -26,6 +26,9 @@ export default function HomeScreen() {
   const [voiceInput, setVoiceInput] = useState('');
   const [aiReply, setAiReply] = useState('');
   const [askingAI, setAskingAI] = useState(false);
+  const [selectedMood, setSelectedMood] = useState('');
+  const [moodSuggestion, setMoodSuggestion] = useState('');
+  const [loadingMood, setLoadingMood] = useState(false);
 
   useEffect(() => {
     loadToday();
@@ -53,6 +56,19 @@ export default function HomeScreen() {
       setAiReply(t('errors.aiUnavailable'));
     } finally {
       setAskingAI(false);
+    }
+  };
+
+  const handleMoodSelect = async (mood: string) => {
+    setSelectedMood(mood);
+    setLoadingMood(true);
+    try {
+      const { data } = await api.post('/voice/mood', { mood });
+      setMoodSuggestion(data.suggestions);
+    } catch {
+      setMoodSuggestion('Try drinking a glass of water and having a small balanced snack.');
+    } finally {
+      setLoadingMood(false);
     }
   };
 
@@ -117,10 +133,49 @@ export default function HomeScreen() {
               <Text style={styles.secondaryIcon}>📦</Text>
               <Text style={styles.secondaryLabel}>{t('home.scanBarcode')}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryBtn} onPress={() => router.push('/camera/MenuMode')}>
-              <Text style={styles.secondaryIcon}>🍽️</Text>
-              <Text style={styles.secondaryLabel}>{t('home.scanMenu')}</Text>
+            <TouchableOpacity style={styles.secondaryBtn} onPress={() => router.push('/camera/LabelMode')}>
+              <Text style={styles.secondaryIcon}>🏷️</Text>
+              <Text style={styles.secondaryLabel}>Scan Label</Text>
             </TouchableOpacity>
+            <TouchableOpacity style={styles.secondaryBtn} onPress={() => router.push('/camera/ReceiptMode')}>
+              <Text style={styles.secondaryIcon}>🧾</Text>
+              <Text style={styles.secondaryLabel}>Receipt</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Mood Coach */}
+          <View style={styles.moodCard}>
+            <Text style={styles.moodTitle}>🌡️ How are you feeling?</Text>
+            <Text style={styles.moodSub}>Get food suggestions based on your mood</Text>
+            <View style={styles.moodRow}>
+              {[
+                { key: 'tired', label: '😴 Tired' },
+                { key: 'stressed', label: '😰 Stressed' },
+                { key: 'energized', label: '💪 Energized' },
+                { key: 'sick', label: '🤒 Sick' },
+                { key: 'bloated', label: '😣 Bloated' },
+              ].map(({ key, label }) => (
+                <TouchableOpacity
+                  key={key}
+                  style={[styles.moodBtn, selectedMood === key && styles.moodBtnActive]}
+                  onPress={() => handleMoodSelect(key)}
+                >
+                  <Text style={[styles.moodBtnText, selectedMood === key && styles.moodBtnTextActive]}>
+                    {label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {loadingMood && (
+              <View style={styles.moodLoading}>
+                <Text style={styles.moodLoadingText}>Getting suggestions...</Text>
+              </View>
+            )}
+            {moodSuggestion && !loadingMood && (
+              <View style={styles.moodReply}>
+                <Text style={styles.moodReplyText}>{moodSuggestion}</Text>
+              </View>
+            )}
           </View>
 
           {/* AI Voice Q&A Bar */}
@@ -223,6 +278,18 @@ const styles = StyleSheet.create({
   voiceHints: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs, marginTop: SPACING.sm },
   hintChip: { backgroundColor: COLORS.surfaceLight, borderRadius: RADIUS.full, paddingHorizontal: 12, paddingVertical: 6 },
   hintText: { color: COLORS.textMuted, fontSize: FONTS.sizes.xs },
+  moodCard: { backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.base, marginBottom: SPACING.lg },
+  moodTitle: { fontSize: FONTS.sizes.md, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 2 },
+  moodSub: { fontSize: FONTS.sizes.xs, color: COLORS.textMuted, marginBottom: SPACING.md },
+  moodRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs },
+  moodBtn: { backgroundColor: COLORS.surfaceLight, borderRadius: RADIUS.full, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: 'transparent' },
+  moodBtnActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  moodBtnText: { color: COLORS.textSecondary, fontSize: FONTS.sizes.xs, fontWeight: '600' },
+  moodBtnTextActive: { color: '#fff' },
+  moodLoading: { marginTop: SPACING.md, alignItems: 'center' },
+  moodLoadingText: { color: COLORS.textMuted, fontSize: FONTS.sizes.sm },
+  moodReply: { backgroundColor: COLORS.background, borderRadius: RADIUS.md, padding: SPACING.md, marginTop: SPACING.md },
+  moodReplyText: { color: COLORS.textSecondary, fontSize: FONTS.sizes.sm, lineHeight: 22 },
   statsRow: { flexDirection: 'row', gap: SPACING.sm },
   statCard: { flex: 1, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.md, alignItems: 'center' },
   statValue: { fontSize: FONTS.sizes.xl, fontWeight: '800', color: COLORS.primary },

@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import multer from 'multer';
 import { authenticate, requirePro, AuthRequest } from '../middleware/auth';
 import { scanFridgeInventory } from '../services/foodRecognition';
+import { scanGroceryReceipt } from '../services/receiptScanner';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -64,6 +65,34 @@ router.post('/scan', authenticate, requirePro, upload.single('photo'), async (re
     return res.json({ added: created.length, items: created });
   } catch {
     return res.status(500).json({ error: 'Fridge scan failed.' });
+  }
+});
+
+// POST /api/pantry/scan-receipt — grocery receipt photo → auto-add all food items to pantry
+router.post('/scan-receipt', authenticate, upload.single('photo'), async (req: AuthRequest, res: Response) => {
+  if (!req.file) return res.status(400).json({ error: 'No photo provided.' });
+  try {
+    const detected = await scanGroceryReceipt(req.file.buffer);
+    if (detected.length === 0) return res.json({ added: 0, items: [], message: 'No food items found on receipt.' });
+
+    const created = await Promise.all(
+      detected.map((item: any) =>
+        prisma.pantryItem.create({
+          data: {
+            userId: req.userId!,
+            itemName: item.name,
+            quantityG: item.estimatedWeightG || 0,
+            unit: item.unit || 'g',
+            freshnessScore: item.freshnessScore || 85,
+            expiryDate: item.estimatedExpiry ? new Date(item.estimatedExpiry) : null,
+          },
+        })
+      )
+    );
+    return res.json({ added: created.length, items: created });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Receipt scan failed.' });
   }
 });
 

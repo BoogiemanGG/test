@@ -4,6 +4,7 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 import { analyzePhoto } from '../services/foodRecognition';
 import { analyzeFridge } from '../services/recipeEngine';
 import { lookupBarcode, searchFoods } from '../services/nutritionCalc';
+import { scanNutritionLabel } from '../services/labelScanner';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
@@ -29,6 +30,18 @@ router.post('/analyze-fridge', authenticate, upload.single('photo'), async (req:
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Could not analyze fridge.' });
+  }
+});
+
+// POST /api/food/scan-label — photo of nutrition label → exact macros
+router.post('/scan-label', authenticate, upload.single('photo'), async (req: AuthRequest, res: Response) => {
+  if (!req.file) return res.status(400).json({ error: 'No photo provided.' });
+  try {
+    const result = await scanNutritionLabel(req.file.buffer);
+    return res.json(result);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Could not read nutrition label.' });
   }
 });
 
