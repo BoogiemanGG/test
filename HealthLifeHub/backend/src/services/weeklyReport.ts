@@ -1,11 +1,11 @@
 /**
  * weeklyReport.ts
- * Generates the Weekly Food Personality report using diary + exercise data + Claude AI
+ * Generates the Weekly Food Personality report using diary + exercise data + Gemini AI
  */
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { PrismaClient } from '@prisma/client';
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
 const prisma = new PrismaClient();
 
 const PERSONALITY_LABELS = [
@@ -40,7 +40,6 @@ export async function generateWeeklyReport(userId: string, weekStart: Date) {
     });
   }
 
-  // Group by day of week
   const byDay = groupByDay(entries, weekStart);
   const dailyCalories = byDay.map(day => day.reduce((sum, e) => sum + e.calories, 0));
 
@@ -48,7 +47,6 @@ export async function generateWeeklyReport(userId: string, weekStart: Date) {
   const calorieTarget = profile?.calorieTarget || 2000;
   const goalHitDays = dailyCalories.filter(c => c > 0 && Math.abs(c - calorieTarget) < 200).length;
 
-  // Most eaten food
   const foodCounts: Record<string, number> = {};
   entries.forEach(e => {
     const name = e.food?.name || e.recipe?.title || 'unknown';
@@ -56,32 +54,22 @@ export async function generateWeeklyReport(userId: string, weekStart: Date) {
   });
   const topFood = Object.entries(foodCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
 
-  // Best and weakest day
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const nonZeroDays = dailyCalories.map((cal, i) => ({ day: dayNames[i], cal })).filter(d => d.cal > 0);
   const bestDay = nonZeroDays.sort((a, b) => Math.abs(a.cal - calorieTarget) - Math.abs(b.cal - calorieTarget))[0]?.day || null;
   const weakestDay = nonZeroDays.sort((a, b) => Math.abs(b.cal - calorieTarget) - Math.abs(a.cal - calorieTarget))[0]?.day || null;
 
-  // Unique plants
   const plants = new Set<string>();
   entries.forEach(e => {
     if (e.food && isPlantBased(e.food.name)) plants.add(e.food.name.toLowerCase());
   });
 
-  // Diet adherence
   const dietAdherence = calcDietAdherence(entries, profile?.dietPlan || 'mediterranean');
-
-  // Organic %
   const organicEntries = entries.filter(e => e.food?.isOrganic);
   const organicPct = entries.length > 0 ? (organicEntries.length / entries.length) * 100 : 0;
-
-  // Health Momentum Score (0-100)
   const momentumScore = calcMomentumScore({ goalHitDays, dietAdherence, plantVariety: plants.size, exercises });
-
-  // Personality label
   const personalityLabel = assignPersonality(entries, profile?.dietPlan || 'mediterranean');
 
-  // AI-generated insight
   const aiInsight = await generateAIInsight({
     avgDailyCalories: Math.round(avgDailyCalories),
     calorieTarget,
@@ -184,8 +172,7 @@ async function generateAIInsight(data: {
   personalityLabel: string;
   exerciseCount: number;
 }): Promise<string> {
-  const prompt = `
-Write a warm, personal 3-sentence weekly health summary for a user with these stats:
+  const prompt = `Write a warm, personal 3-sentence weekly health summary for a user with these stats:
 - Average daily calories: ${data.avgDailyCalories} (target: ${data.calorieTarget})
 - Hit calorie goal: ${data.goalHitDays}/7 days
 - Most eaten food: ${data.topFood}
@@ -198,12 +185,9 @@ Write a warm, personal 3-sentence weekly health summary for a user with these st
 Be encouraging, specific, and end with ONE actionable tip for next week. General wellness only — not medical advice.`;
 
   try {
-    const response = await anthropic.messages.create({
-      model: 'claude-opus-4-6',
-      max_tokens: 200,
-      messages: [{ role: 'user', content: prompt }],
-    });
-    return response.content[0].type === 'text' ? response.content[0].text : '';
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const result = await model.generateContent(prompt);
+    return result.response.text() || '';
   } catch {
     return `Great effort this week! You hit your goal ${data.goalHitDays} out of 7 days. Keep building on your "${data.personalityLabel}" style and aim for one more plant-based meal next week.`;
   }

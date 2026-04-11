@@ -1,10 +1,12 @@
 /**
  * foodRecognition.ts
- * Sends food/fridge photos to Google Vision API + Edamam for nutrition analysis
+ * Gemini Vision — analyzes food/fridge photos in a single API call.
+ * Replaces the old Google Vision API + Edamam two-step approach.
  */
-import axios from 'axios';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { PrismaClient } from '@prisma/client';
 
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
 const prisma = new PrismaClient();
 
 interface FoodAnalysisResult {
@@ -13,7 +15,7 @@ interface FoodAnalysisResult {
   totalProteinG: number;
   totalCarbsG: number;
   totalFatG: number;
-  plateScoreOut100: number;     // Plate Architecture Score
+  plateScoreOut100: number;
   dietCompatibility: DietScores;
   suggestions: string[];
 }
@@ -46,36 +48,49 @@ interface FridgeItem {
 // Analyze a plate photo → return calories + macros + plate score
 export async function analyzePhoto(imageBuffer: Buffer, userId: string): Promise<FoodAnalysisResult> {
   const base64 = imageBuffer.toString('base64');
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
-  // Step 1: Google Vision — detect food items
-  const visionResponse = await axios.post(
-    `https://vision.googleapis.com/v1/images:annotate?key=${process.env.GOOGLE_VISION_API_KEY}`,
+  const prompt = `Analyze this food photo and identify all visible food items with their nutrition.
+Return ONLY a valid JSON object in this exact format, no extra text:
+{
+  "items": [
     {
-      requests: [{
-        image: { content: base64 },
-        features: [
-          { type: 'LABEL_DETECTION', maxResults: 20 },
-          { type: 'OBJECT_LOCALIZATION', maxResults: 10 },
-        ],
-      }],
+      "name": "food name",
+      "estimatedWeightG": 150,
+      "calories": 250,
+      "proteinG": 12,
+      "carbsG": 30,
+      "fatG": 8,
+      "sodiumMg": 200
     }
-  );
+  ]
+}
+Identify up to 5 food items. Estimate realistic portion weights. Use standard nutrition values per estimated weight.`;
 
-  const labels: string[] = visionResponse.data.responses[0]?.labelAnnotations
-    ?.filter((l: any) => l.score > 0.7)
-    .map((l: any) => l.description) || [];
+  let detectedItems: DetectedItem[] = [];
 
-  const foodLabels = labels.filter(l => isFoodLabel(l));
-
-  // Step 2: Edamam — get nutrition for detected foods
-  const detectedItems: DetectedItem[] = [];
-  for (const label of foodLabels.slice(0, 5)) {
-    try {
-      const nutrition = await getEdamamNutrition(label, 150); // estimate 150g per item
-      detectedItems.push(nutrition);
-    } catch {
-      // skip items not found in nutrition DB
+  try {
+    const result = await model.generateContent([
+      { inlineData: { data: base64, mimeType: 'image/jpeg' } },
+      prompt,
+    ]);
+    const text = result.response.text().trim();
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      detectedItems = (parsed.items || []).map((item: any) => ({
+        name: String(item.name || 'Unknown food'),
+        confidence: 0.85,
+        estimatedWeightG: Number(item.estimatedWeightG) || 150,
+        calories: Number(item.calories) || 0,
+        proteinG: Number(item.proteinG) || 0,
+        carbsG: Number(item.carbsG) || 0,
+        fatG: Number(item.fatG) || 0,
+        sodiumMg: Number(item.sodiumMg) || 0,
+      }));
     }
+  } catch {
+    // Return empty result on failure
   }
 
   const totals = detectedItems.reduce(
@@ -88,14 +103,9 @@ export async function analyzePhoto(imageBuffer: Buffer, userId: string): Promise
     { calories: 0, proteinG: 0, carbsG: 0, fatG: 0 }
   );
 
-  // Step 3: Calculate Plate Architecture Score
   const plateScore = calcPlateScore(totals);
-
-  // Step 4: Get user diet plan for compatibility scores
   const profile = await prisma.userProfile.findUnique({ where: { userId } });
   const dietScores = calcDietCompatibility(detectedItems, profile?.dietPlan || 'mediterranean');
-
-  // Step 5: Generate suggestions
   const suggestions = generateFoodSuggestions(totals, profile?.calorieTarget || 2000, profile?.dietPlan || 'mediterranean');
 
   return {
@@ -113,72 +123,60 @@ export async function analyzePhoto(imageBuffer: Buffer, userId: string): Promise
 // Analyze a fridge photo → return detected items for pantry
 export async function scanFridgeInventory(imageBuffer: Buffer): Promise<FridgeItem[]> {
   const base64 = imageBuffer.toString('base64');
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
-  const visionResponse = await axios.post(
-    `https://vision.googleapis.com/v1/images:annotate?key=${process.env.GOOGLE_VISION_API_KEY}`,
+  const prompt = `Analyze this fridge/pantry photo and list all visible food items.
+Return ONLY a valid JSON object in this exact format, no extra text:
+{
+  "items": [
     {
-      requests: [{
-        image: { content: base64 },
-        features: [
-          { type: 'LABEL_DETECTION', maxResults: 30 },
-          { type: 'OBJECT_LOCALIZATION', maxResults: 20 },
-        ],
-      }],
+      "name": "item name",
+      "estimatedWeightG": 200,
+      "unit": "g",
+      "freshnessScore": 85,
+      "daysUntilExpiry": 7
     }
-  );
+  ]
+}
+List up to 20 visible items. Use "ml" for liquids, "g" for solids.
+freshnessScore is 0-100 (100 = very fresh). Estimate daysUntilExpiry realistically.`;
 
-  const labels: string[] = visionResponse.data.responses[0]?.labelAnnotations
-    ?.filter((l: any) => l.score > 0.65)
-    .map((l: any) => l.description) || [];
+  try {
+    const result = await model.generateContent([
+      { inlineData: { data: base64, mimeType: 'image/jpeg' } },
+      prompt,
+    ]);
+    const text = result.response.text().trim();
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return [];
 
-  const foodLabels = labels.filter(l => isFoodLabel(l));
-
-  return foodLabels.map(label => ({
-    name: label,
-    estimatedWeightG: estimateDefaultWeight(label),
-    unit: estimateUnit(label),
-    freshnessScore: 90,
-    estimatedExpiry: estimateExpiry(label),
-  }));
+    const parsed = JSON.parse(jsonMatch[0]);
+    return (parsed.items || []).map((item: any) => {
+      const days = Number(item.daysUntilExpiry) || 14;
+      const expiry = new Date();
+      expiry.setDate(expiry.getDate() + days);
+      return {
+        name: String(item.name || 'Unknown item'),
+        estimatedWeightG: Number(item.estimatedWeightG) || 200,
+        unit: String(item.unit || 'g'),
+        freshnessScore: Number(item.freshnessScore) || 80,
+        estimatedExpiry: expiry.toISOString(),
+      };
+    });
+  } catch {
+    return [];
+  }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-async function getEdamamNutrition(food: string, weightG: number): Promise<DetectedItem> {
-  const res = await axios.get('https://api.edamam.com/api/nutrition-data', {
-    params: {
-      app_id: process.env.EDAMAM_APP_ID,
-      app_key: process.env.EDAMAM_APP_KEY,
-      ingr: `${weightG}g ${food}`,
-    },
-  });
-  const d = res.data;
-  return {
-    name: food,
-    confidence: 0.8,
-    estimatedWeightG: weightG,
-    calories: d.calories || 0,
-    proteinG: d.totalNutrients?.PROCNT?.quantity || 0,
-    carbsG: d.totalNutrients?.CHOCDF?.quantity || 0,
-    fatG: d.totalNutrients?.FAT?.quantity || 0,
-    sodiumMg: d.totalNutrients?.NA?.quantity || 0,
-  };
-}
-
-function isFoodLabel(label: string): boolean {
-  const foodKeywords = ['food', 'dish', 'meal', 'fruit', 'vegetable', 'meat', 'chicken',
-    'fish', 'rice', 'bread', 'pasta', 'salad', 'soup', 'egg', 'cheese', 'milk',
-    'apple', 'banana', 'tomato', 'lettuce', 'carrot', 'broccoli', 'potato', 'onion'];
-  return foodKeywords.some(k => label.toLowerCase().includes(k));
-}
-
 function calcPlateScore(totals: { calories: number; proteinG: number; carbsG: number; fatG: number }): number {
-  // Ideal: 50% carbs, 25% protein, 25% fat by calories
   if (totals.calories === 0) return 0;
   const proteinCal = totals.proteinG * 4;
   const carbsCal = totals.carbsG * 4;
   const fatCal = totals.fatG * 9;
   const total = proteinCal + carbsCal + fatCal;
+  if (total === 0) return 0;
 
   const proteinPct = proteinCal / total;
   const carbsPct = carbsCal / total;
@@ -192,7 +190,6 @@ function calcPlateScore(totals: { calories: number; proteinG: number; carbsG: nu
 }
 
 function calcDietCompatibility(_items: DetectedItem[], _dietPlan: string): DietScores {
-  // Simplified scoring — in production this would be more sophisticated
   return { dash: 70, mediterranean: 75, flexitarian: 65 };
 }
 
@@ -219,31 +216,4 @@ function generateFoodSuggestions(
   }
 
   return suggestions;
-}
-
-function estimateDefaultWeight(food: string): number {
-  const weights: Record<string, number> = {
-    apple: 182, banana: 120, egg: 60, chicken: 300, milk: 500,
-    bread: 400, cheese: 200, tomato: 150, default: 200,
-  };
-  const key = Object.keys(weights).find(k => food.toLowerCase().includes(k));
-  return key ? weights[key] : weights.default;
-}
-
-function estimateUnit(food: string): string {
-  const liquids = ['milk', 'juice', 'yogurt', 'cream'];
-  if (liquids.some(l => food.toLowerCase().includes(l))) return 'ml';
-  return 'g';
-}
-
-function estimateExpiry(food: string): string | null {
-  const daysToExpiry: Record<string, number> = {
-    milk: 7, egg: 21, chicken: 3, fish: 2, spinach: 5, lettuce: 7,
-    apple: 30, banana: 7, cheese: 14, default: 14,
-  };
-  const key = Object.keys(daysToExpiry).find(k => food.toLowerCase().includes(k));
-  const days = key ? daysToExpiry[key] : daysToExpiry.default;
-  const expiry = new Date();
-  expiry.setDate(expiry.getDate() + days);
-  return expiry.toISOString();
 }

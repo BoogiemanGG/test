@@ -1,12 +1,14 @@
 /**
  * recipeEngine.ts
- * Spoonacular integration — recipe search, fridge-to-recipe, shopping list generation
+ * Gemini-powered recipe engine — generates recipes from ingredients and diet plans.
+ * Replaces the old Spoonacular integration.
  */
-import axios from 'axios';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { PrismaClient } from '@prisma/client';
+import { v4 as uuidv4 } from 'uuid';
 
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
 const prisma = new PrismaClient();
-const SPOONACULAR_BASE = 'https://api.spoonacular.com';
 
 interface RecipeQuery {
   diet?: string;
@@ -16,103 +18,167 @@ interface RecipeQuery {
   page?: number;
 }
 
-// Diet plan mappings to Spoonacular diet params
-const DIET_MAP: Record<string, string> = {
-  dash: 'dash',
-  mediterranean: 'mediterranean',
-  flexitarian: 'vegetarian',
-  keto: 'ketogenic',
-  vegan: 'vegan',
-  gluten_free: 'gluten free',
-};
+interface GeneratedRecipe {
+  id: string;
+  title: string;
+  imageUrl: string | null;
+  caloriesServing: number;
+  proteinServing: number;
+  carbsServing: number;
+  fatServing: number;
+  fiberServing: number;
+  sodiumServing: number;
+  prepTimeMins: number;
+  servings: number;
+  dietDash: boolean;
+  dietMed: boolean;
+  dietFlex: boolean;
+  dietVegan: boolean;
+  cuisine: string | null;
+  instructions: string;
+  ingredients: Array<{ ingredientName: string; quantity: number; unit: string }>;
+  tags: string[];
+}
 
 export async function fetchRecipes(params: RecipeQuery) {
-  const { diet, maxCalories, cuisine, query, page = 1 } = params;
-  const offset = (page - 1) * 20;
+  const { diet, maxCalories, query, page = 1 } = params;
 
-  try {
-    const res = await axios.get(`${SPOONACULAR_BASE}/recipes/complexSearch`, {
-      params: {
-        apiKey: process.env.SPOONACULAR_API_KEY,
-        diet: diet ? DIET_MAP[diet] : undefined,
-        maxCalories,
-        cuisine,
-        query,
-        number: 20,
-        offset,
-        addRecipeNutrition: true,
-        fillIngredients: false,
-        instructionsRequired: true,
-        sort: 'popularity',
-      },
-    });
+  // Try local DB first
+  const dbResults = await prisma.recipe.findMany({
+    where: {
+      ...(diet === 'dash' && { dietDash: true }),
+      ...(diet === 'mediterranean' && { dietMed: true }),
+      ...(diet === 'flexitarian' && { dietFlex: true }),
+      ...(query && { title: { contains: query } }),
+    },
+    take: 20,
+    skip: (page - 1) * 20,
+  });
 
-    return res.data.results.map(mapSpoonacularRecipe);
-  } catch {
-    // Fallback to local DB
-    return prisma.recipe.findMany({
-      where: {
-        ...(diet === 'dash' && { dietDash: true }),
-        ...(diet === 'mediterranean' && { dietMed: true }),
-        ...(diet === 'flexitarian' && { dietFlex: true }),
-        ...(query && { title: { contains: query, mode: 'insensitive' } }),
-      },
-      take: 20,
-      skip: (page - 1) * 20,
-    });
+  if (dbResults.length >= 5) return dbResults;
+
+  // Generate recipes with Gemini if DB is sparse
+  const recipes = await generateRecipesWithGemini({ diet, maxCalories, query, count: 10 });
+
+  // Cache generated recipes in local DB for future use
+  for (const r of recipes) {
+    try {
+      await prisma.recipe.upsert({
+        where: { id: r.id },
+        update: {},
+        create: {
+          id: r.id,
+          title: r.title,
+          imageUrl: r.imageUrl,
+          caloriesServing: r.caloriesServing,
+          proteinServing: r.proteinServing,
+          carbsServing: r.carbsServing,
+          fatServing: r.fatServing,
+          fiberServing: r.fiberServing,
+          sodiumServing: r.sodiumServing,
+          prepTimeMins: r.prepTimeMins,
+          servings: r.servings,
+          dietDash: r.dietDash,
+          dietMed: r.dietMed,
+          dietFlex: r.dietFlex,
+          dietVegan: r.dietVegan,
+          cuisine: r.cuisine,
+          instructions: r.instructions,
+          tags: JSON.stringify(r.tags),
+        },
+      });
+    } catch {
+      // Skip duplicates
+    }
   }
+
+  return recipes;
 }
 
 export async function getRecipeById(id: string) {
-  // Check if numeric (Spoonacular) or UUID (local DB)
-  if (!isNaN(Number(id))) {
-    try {
-      const res = await axios.get(`${SPOONACULAR_BASE}/recipes/${id}/information`, {
-        params: {
-          apiKey: process.env.SPOONACULAR_API_KEY,
-          includeNutrition: true,
-        },
-      });
-      return mapSpoonacularRecipeDetail(res.data);
-    } catch {
-      return null;
-    }
-  }
   return prisma.recipe.findUnique({ where: { id }, include: { ingredients: true } });
 }
 
-export async function findRecipesFromIngredients(ingredients: string[], diet: string, userId: string) {
+export async function findRecipesFromIngredients(ingredients: string[], diet: string, _userId: string) {
+  if (ingredients.length === 0) return { dash: [], mediterranean: [], flexitarian: [], all: [] };
+
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
+  const prompt = `You are a recipe generator. Given these fridge ingredients: ${ingredients.slice(0, 15).join(', ')}
+
+Generate 9 recipes (3 for each diet: DASH, Mediterranean, Flexitarian) that use mainly these ingredients.
+Return ONLY a valid JSON object, no extra text:
+{
+  "dash": [
+    {
+      "title": "Recipe Name",
+      "caloriesServing": 350,
+      "proteinServing": 25,
+      "carbsServing": 40,
+      "fatServing": 8,
+      "fiberServing": 5,
+      "sodiumServing": 380,
+      "prepTimeMins": 20,
+      "servings": 2,
+      "cuisine": "American",
+      "instructions": "Step 1: ... Step 2: ...",
+      "ingredients": [{"name": "chicken breast", "quantity": 200, "unit": "g"}],
+      "tags": ["low-sodium", "heart-healthy"]
+    }
+  ],
+  "mediterranean": [...],
+  "flexitarian": [...]
+}
+DASH = low sodium (<600mg), Mediterranean = healthy fats + olive oil, Flexitarian = plant-forward.
+Make recipes realistic and delicious.`;
+
   try {
-    // Step 1: Find recipes by ingredients (Spoonacular)
-    const res = await axios.get(`${SPOONACULAR_BASE}/recipes/findByIngredients`, {
-      params: {
-        apiKey: process.env.SPOONACULAR_API_KEY,
-        ingredients: ingredients.join(','),
-        number: 15,
-        ranking: 1,       // maximize used ingredients
-        ignorePantry: true,
-      },
+    const result = await model.generateContent(prompt);
+    const text = result.response.text().trim();
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return { dash: [], mediterranean: [], flexitarian: [], all: [] };
+
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    const mapRecipe = (r: any, dietFlags: { dietDash: boolean; dietMed: boolean; dietFlex: boolean }) => ({
+      id: uuidv4(),
+      title: String(r.title || 'Recipe'),
+      imageUrl: null,
+      caloriesServing: Number(r.caloriesServing) || 300,
+      proteinServing: Number(r.proteinServing) || 15,
+      carbsServing: Number(r.carbsServing) || 35,
+      fatServing: Number(r.fatServing) || 10,
+      fiberServing: Number(r.fiberServing) || 4,
+      sodiumServing: Number(r.sodiumServing) || 400,
+      prepTimeMins: Number(r.prepTimeMins) || 25,
+      servings: Number(r.servings) || 2,
+      cuisine: r.cuisine || null,
+      instructions: String(r.instructions || ''),
+      ingredients: (r.ingredients || []).map((i: any) => ({
+        ingredientName: String(i.name || i.ingredientName || ''),
+        quantity: Number(i.quantity) || 1,
+        unit: String(i.unit || 'piece'),
+      })),
+      tags: Array.isArray(r.tags) ? r.tags : [],
+      dietVegan: false,
+      ...dietFlags,
     });
 
-    const recipeIds = res.data.map((r: any) => r.id).slice(0, 9); // 3 per diet = 9 total
+    const dash = (parsed.dash || []).slice(0, 3).map((r: any) =>
+      mapRecipe(r, { dietDash: true, dietMed: false, dietFlex: false })
+    );
+    const mediterranean = (parsed.mediterranean || []).slice(0, 3).map((r: any) =>
+      mapRecipe(r, { dietDash: false, dietMed: true, dietFlex: false })
+    );
+    const flexitarian = (parsed.flexitarian || []).slice(0, 3).map((r: any) =>
+      mapRecipe(r, { dietDash: false, dietMed: false, dietFlex: true })
+    );
 
-    // Step 2: Get nutrition details for these recipes
-    const detailsRes = await axios.get(`${SPOONACULAR_BASE}/recipes/informationBulk`, {
-      params: {
-        apiKey: process.env.SPOONACULAR_API_KEY,
-        ids: recipeIds.join(','),
-        includeNutrition: true,
-      },
-    });
-
-    const allRecipes = detailsRes.data.map(mapSpoonacularRecipeDetail);
-
-    // Step 3: Sort into 3 diet categories
     return {
-      dash: allRecipes.filter((r: any) => r.sodiumServing < 600).slice(0, 3),
-      mediterranean: allRecipes.filter((r: any) => r.fatServing > 5).slice(0, 3),
-      flexitarian: allRecipes.filter((r: any) => r.fiberServing > 3).slice(0, 3),
-      all: allRecipes,
+      dash,
+      mediterranean,
+      flexitarian,
+      all: [...dash, ...mediterranean, ...flexitarian],
     };
   } catch {
     return { dash: [], mediterranean: [], flexitarian: [], all: [] };
@@ -152,7 +218,6 @@ export async function generateSmartShoppingList(userId: string): Promise<number>
   const pantryNames = pantryItems.map(p => p.itemName.toLowerCase());
   const itemsToAdd: Array<{ itemName: string; reason: string; isOrganic: boolean }> = [];
 
-  // Check what's missing for favorite recipes
   for (const saved of savedRecipes) {
     for (const ingredient of saved.recipe.ingredients) {
       const name = ingredient.ingredientName.toLowerCase();
@@ -160,14 +225,13 @@ export async function generateSmartShoppingList(userId: string): Promise<number>
       if (!inPantry) {
         itemsToAdd.push({
           itemName: ingredient.ingredientName,
-          reason: `recipe_ingredient`,
+          reason: 'recipe_ingredient',
           isOrganic: profile?.organicMode || false,
         });
       }
     }
   }
 
-  // Check for expiring items that need replacement
   const expiring = pantryItems.filter(p => {
     if (!p.expiryDate) return false;
     const daysLeft = (p.expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24);
@@ -181,7 +245,6 @@ export async function generateSmartShoppingList(userId: string): Promise<number>
     });
   }
 
-  // Deduplicate
   const unique = itemsToAdd.filter((item, index, arr) =>
     arr.findIndex(i => i.itemName.toLowerCase() === item.itemName.toLowerCase()) === index
   );
@@ -194,45 +257,86 @@ export async function generateSmartShoppingList(userId: string): Promise<number>
   return unique.length;
 }
 
-// ─── Mappers ────────────────────────────────────────────────────────────────
+// ─── Internal helpers ────────────────────────────────────────────────────────
 
-function mapSpoonacularRecipe(r: any) {
-  const nutrients = r.nutrition?.nutrients || [];
-  const getNutrient = (name: string) =>
-    nutrients.find((n: any) => n.name === name)?.amount || 0;
+async function generateRecipesWithGemini(params: {
+  diet?: string;
+  maxCalories?: number;
+  query?: string;
+  count: number;
+}): Promise<GeneratedRecipe[]> {
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
-  return {
-    id: String(r.id),
-    title: r.title,
-    imageUrl: r.image,
-    caloriesServing: getNutrient('Calories'),
-    proteinServing: getNutrient('Protein'),
-    carbsServing: getNutrient('Carbohydrates'),
-    fatServing: getNutrient('Fat'),
-    fiberServing: getNutrient('Fiber'),
-    sodiumServing: getNutrient('Sodium'),
-    prepTimeMins: r.readyInMinutes || 0,
-    servings: r.servings || 2,
-    dietDash: r.lowFodmap || false,
-    dietMed: r.mediterranean || false,
-    dietFlex: r.vegetarian || false,
-    dietVegan: r.vegan || false,
-    cuisine: r.cuisines?.[0] || null,
-  };
-}
+  const dietDesc = params.diet === 'dash'
+    ? 'DASH diet (low sodium, heart-healthy)'
+    : params.diet === 'mediterranean'
+    ? 'Mediterranean diet (healthy fats, fish, vegetables, olive oil)'
+    : params.diet === 'flexitarian'
+    ? 'Flexitarian diet (mostly plant-based, occasional lean meat)'
+    : 'balanced, healthy';
 
-function mapSpoonacularRecipeDetail(r: any) {
-  const base = mapSpoonacularRecipe(r);
-  return {
-    ...base,
-    instructions: r.instructions || '',
-    ingredients: r.extendedIngredients?.map((i: any) => ({
-      ingredientName: i.name,
-      quantity: i.amount,
-      unit: i.unit,
-    })) || [],
-    tags: [...(r.cuisines || []), ...(r.dishTypes || []), ...(r.diets || [])],
-  };
+  const calorieStr = params.maxCalories ? `, under ${params.maxCalories} calories per serving` : '';
+  const queryStr = params.query ? `, related to "${params.query}"` : '';
+
+  const prompt = `Generate ${params.count} healthy ${dietDesc} recipes${calorieStr}${queryStr}.
+Return ONLY a valid JSON array, no extra text:
+[
+  {
+    "title": "Recipe Name",
+    "caloriesServing": 350,
+    "proteinServing": 25,
+    "carbsServing": 40,
+    "fatServing": 10,
+    "fiberServing": 5,
+    "sodiumServing": 400,
+    "prepTimeMins": 25,
+    "servings": 2,
+    "cuisine": "Mediterranean",
+    "instructions": "Step 1: Chop vegetables. Step 2: ...",
+    "ingredients": [{"name": "chicken breast", "quantity": 200, "unit": "g"}],
+    "tags": ["healthy", "quick"]
+  }
+]`;
+
+  try {
+    const result = await model.generateContent(prompt);
+    const text = result.response.text().trim();
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return [];
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    const isDash = params.diet === 'dash';
+    const isMed = params.diet === 'mediterranean';
+    const isFlex = params.diet === 'flexitarian';
+
+    return parsed.map((r: any): GeneratedRecipe => ({
+      id: uuidv4(),
+      title: String(r.title || 'Healthy Recipe'),
+      imageUrl: null,
+      caloriesServing: Number(r.caloriesServing) || 300,
+      proteinServing: Number(r.proteinServing) || 15,
+      carbsServing: Number(r.carbsServing) || 35,
+      fatServing: Number(r.fatServing) || 10,
+      fiberServing: Number(r.fiberServing) || 4,
+      sodiumServing: Number(r.sodiumServing) || 400,
+      prepTimeMins: Number(r.prepTimeMins) || 25,
+      servings: Number(r.servings) || 2,
+      dietDash: isDash,
+      dietMed: isMed,
+      dietFlex: isFlex,
+      dietVegan: false,
+      cuisine: r.cuisine || null,
+      instructions: String(r.instructions || ''),
+      ingredients: (r.ingredients || []).map((i: any) => ({
+        ingredientName: String(i.name || i.ingredientName || ''),
+        quantity: Number(i.quantity) || 1,
+        unit: String(i.unit || 'piece'),
+      })),
+      tags: Array.isArray(r.tags) ? r.tags : [],
+    }));
+  } catch {
+    return [];
+  }
 }
 
 async function getRemainingCalories(userId: string): Promise<number> {

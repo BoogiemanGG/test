@@ -1,12 +1,12 @@
 /**
  * aiCoach.ts
- * Claude-powered AI coach — handles voice Q&A, craving translator,
+ * Gemini-powered AI coach — handles voice Q&A, craving translator,
  * dining out advice, personalized coaching
  */
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { PrismaClient } from '@prisma/client';
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
 const prisma = new PrismaClient();
 
 interface CoachInput {
@@ -38,14 +38,14 @@ Rules:
 - Disclaimer line (add at end when giving nutrition advice): "General wellness info only — not medical advice."`;
 
 export async function askAICoach({ userId, message, context }: CoachInput): Promise<string> {
-  // Build context from user data
   const userContext = await buildUserContext(userId);
 
   const contextStr = context
     ? `Current context: location=${context.location || 'unknown'}, time=${context.currentTime || new Date().toLocaleTimeString()}, meal=${context.mealType || 'unspecified'}`
     : '';
 
-  const userMessage = `
+  const prompt = `${SYSTEM_PROMPT}
+
 ${contextStr}
 
 User's data:
@@ -59,17 +59,15 @@ User's data:
 
 User asks: "${message}"`;
 
-  const response = await anthropic.messages.create({
-    model: 'claude-opus-4-6',
-    max_tokens: 300,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: userMessage }],
-  });
-
-  return response.content[0].type === 'text' ? response.content[0].text : 'I could not process that. Please try again.';
+  try {
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const result = await model.generateContent(prompt);
+    return result.response.text() || 'I could not process that. Please try again.';
+  } catch {
+    return 'I could not process that right now. Please try again in a moment.';
+  }
 }
 
-// Build rich context object for the AI from the user's live data
 async function buildUserContext(userId: string) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -115,10 +113,10 @@ async function buildUserContext(userId: string) {
   };
 }
 
-// Specific craving translator — maps cravings to healthy swaps
 export async function translateCraving(userId: string, craving: string): Promise<string> {
   const context = await buildUserContext(userId);
-  const prompt = `
+  const prompt = `${SYSTEM_PROMPT}
+
 The user craves: "${craving}"
 Their pantry has: ${context.pantryItems.join(', ') || 'nothing scanned yet'}
 Their diet plan: ${context.dietPlan}
@@ -128,12 +126,11 @@ Give ONE healthy swap that satisfies the same flavor/texture need, preferably us
 Be specific: name the item, how to prepare it simply, and its approximate calories.
 Keep it to 2 sentences.`;
 
-  const response = await anthropic.messages.create({
-    model: 'claude-opus-4-6',
-    max_tokens: 150,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: prompt }],
-  });
-
-  return response.content[0].type === 'text' ? response.content[0].text : 'Try a handful of nuts or fruit for that craving!';
+  try {
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const result = await model.generateContent(prompt);
+    return result.response.text() || 'Try a handful of nuts or fruit for that craving!';
+  } catch {
+    return 'Try a handful of nuts or fruit for that craving!';
+  }
 }
