@@ -1,12 +1,13 @@
 // HealthLifeHub Database Schema
-// Provider: PostgreSQL via Supabase
+// Provider: SQLite (local file — works on Replit, dev, and small deployments)
+// For production scale, swap provider to "postgresql" and update DATABASE_URL.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -49,7 +50,7 @@ model UserProfile {
   goal           String   @default("maintain")  // lose_weight/maintain/gain_muscle
   calorieTarget  Int      @default(2000)
   dietPlan       String   @default("mediterranean")  // dash/mediterranean/flexitarian/keto/vegan
-  allergies      String[] @default([])
+  allergies      String   @default("[]")  // JSON array stored as string e.g. '["gluten","nuts"]'
   organicMode    Boolean  @default(false)
   updatedAt      DateTime @updatedAt
 
@@ -88,7 +89,7 @@ model Food {
   flexScore      Int      @default(50)
   // Metadata
   isOrganic      Boolean  @default(false)
-  seasonMonths   Int[]    @default([])  // [6,7,8] = in season Jun/Jul/Aug
+  seasonMonths   String   @default("[]")  // JSON array e.g. '[6,7,8]' = in season Jun/Jul/Aug
   imageUrl       String?
   createdAt      DateTime @default(now())
 
@@ -159,7 +160,7 @@ model Recipe {
   cuisine          String?
   isOrganic        Boolean  @default(false)
   instructions     String?
-  tags             String[] @default([])
+  tags             String   @default("[]")  // JSON array e.g. '["italian","healthy"]'
   createdAt        DateTime @default(now())
 
   ingredients  RecipeIngredient[]

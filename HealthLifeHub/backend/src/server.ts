@@ -19,12 +19,18 @@ import shoppingRoutes from './routes/shopping';
 dotenv.config();
 
 const app = express();
+
+// Replit assigns PORT automatically via environment variable.
+// Fallback to 3000 for local dev.
 const PORT = process.env.PORT || 3000;
 
 // Security & performance middleware
 app.use(helmet());
 app.use(compression());
 app.use(morgan('combined'));
+// On Replit, the app is accessed via a *.replit.dev public URL.
+// We allow all origins here so the mobile app can reach the API.
+// Tighten this in production by setting ALLOWED_ORIGINS.
 app.use(cors({
   origin: process.env.ALLOWED_ORIGINS?.split(',') || '*',
   credentials: true,
@@ -71,8 +77,10 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   res.status(500).json({ error: 'Something went wrong. Please try again.' });
 });
 
-app.listen(PORT, () => {
+// Replit requires binding to '0.0.0.0', not 'localhost'.
+app.listen(Number(PORT), '0.0.0.0', () => {
   console.log(`HealthLifeHub API running on port ${PORT}`);
+  console.log(`Health check: http://0.0.0.0:${PORT}/health`);
 });
 
 export default app;

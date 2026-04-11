@@ -1,0 +1,24 @@
+# HealthLifeHub — Replit Configuration
+# This file tells Replit how to install, build, and run the backend.
+
+run = "cd backend && npm run dev"
+
+# Replit automatically exposes port 3000 via a public *.replit.dev URL.
+# The server.ts binds to 0.0.0.0 so Replit can proxy it.
+
+[nix]
+channel = "stable-23_11"
+
+[env]
+# NODE_ENV defaults to development on Replit.
+# Add your real secrets in the Replit "Secrets" panel (the padlock icon) —
+# do NOT paste API keys directly into this file.
+NODE_ENV = "development"
+
+[deployment]
+run = ["sh", "-c", "cd backend && npm run build && npm start"]
+deploymentTarget = "cloudrun"
+
+[[ports]]
+localPort = 3000
+externalPort = 80
