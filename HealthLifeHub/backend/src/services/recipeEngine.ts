@@ -251,7 +251,6 @@ export async function generateSmartShoppingList(userId: string): Promise<number>
 
   await prisma.shoppingItem.createMany({
     data: unique.map(item => ({ userId, ...item, quantity: 1, unit: 'piece' })),
-    skipDuplicates: true,
   });
 
   return unique.length;

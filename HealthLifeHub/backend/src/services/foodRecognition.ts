@@ -37,7 +37,7 @@ interface DietScores {
   flexitarian: number;
 }
 
-interface FridgeItem {
+export interface FridgeItem {
   name: string;
   estimatedWeightG: number;
   unit: string;
