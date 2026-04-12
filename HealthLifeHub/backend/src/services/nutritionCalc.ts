@@ -1,25 +1,29 @@
 /**
  * nutritionCalc.ts
- * Nutrition lookups, barcode scanning, food search, diary status
+ * Nutrition lookups, barcode scanning (Open Food Facts), food search (Gemini),
+ * and diary status. Uses native fetch — no axios dependency needed.
  */
-import axios from 'axios';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { PrismaClient } from '@prisma/client';
 
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
 const prisma = new PrismaClient();
 
 export async function lookupBarcode(barcode: string) {
-  // First check local cache
+  // Check local cache first
   const cached = await prisma.food.findUnique({ where: { barcode } });
   if (cached) return cached;
 
-  // Try Open Food Facts (free, no API key needed)
+  // Open Food Facts — completely free, no API key needed
   try {
-    const res = await axios.get(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
-    if (res.data.status !== 1) return null;
-    const p = res.data.product;
+    const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
+    const data = await res.json() as any;
+    if (data.status !== 1) return null;
+
+    const p = data.product;
     const n = p.nutriments || {};
 
-    const food = await prisma.food.create({
+    return await prisma.food.create({
       data: {
         externalId: `off_${barcode}`,
         barcode,
@@ -35,52 +39,63 @@ export async function lookupBarcode(barcode: string) {
         imageUrl: p.image_url || null,
       },
     });
-    return food;
   } catch {
     return null;
   }
 }
 
 export async function searchFoods(query: string, diet?: string) {
-  // Search Edamam food database
+  // Try local DB first (SQLite: no mode:'insensitive' — use plain contains)
+  const local = await prisma.food.findMany({
+    where: { name: { contains: query } },
+    take: 20,
+  });
+  if (local.length >= 3) return local;
+
+  // Use Gemini to look up nutrition for unknown foods
   try {
-    const res = await axios.get('https://api.edamam.com/api/food-database/v2/parser', {
-      params: {
-        app_id: process.env.EDAMAM_APP_ID,
-        app_key: process.env.EDAMAM_APP_KEY,
-        ingr: query,
-        'nutrition-type': 'logging',
-      },
-    });
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const dietNote = diet ? ` Prefer ${diet}-diet-friendly options.` : '';
+    const prompt = `Provide accurate nutrition facts per 100g for "${query}".${dietNote}
+Return ONLY a JSON array, no extra text:
+[
+  {
+    "name": "exact food name",
+    "calories100g": 150,
+    "protein100g": 5.2,
+    "carbs100g": 20.1,
+    "fat100g": 3.4,
+    "fiber100g": 2.1,
+    "sugar100g": 8.0,
+    "sodium100mg": 50
+  }
+]
+List up to 5 common variations or preparations. All values per 100g.`;
 
-    let hints = res.data.hints?.slice(0, 20) || [];
+    const result = await model.generateContent(prompt);
+    const text = result.response.text().trim();
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return local;
 
-    // Filter by diet compatibility if specified
-    if (diet) {
-      hints = hints.filter((h: any) => {
-        const categories = h.food?.categoryLabel?.toLowerCase() || '';
-        if (diet === 'vegan') return !categories.includes('meat') && !categories.includes('dairy');
-        if (diet === 'dash') return (h.food?.nutrients?.NA || 0) < 300;
-        return true;
-      });
-    }
-
-    return hints.map((h: any) => ({
-      id: h.food.foodId,
-      name: h.food.label,
-      brand: h.food.brand,
-      calories100g: h.food.nutrients?.ENERC_KCAL || 0,
-      protein100g: h.food.nutrients?.PROCNT || 0,
-      carbs100g: h.food.nutrients?.CHOCDF || 0,
-      fat100g: h.food.nutrients?.FAT || 0,
-      imageUrl: h.food.image,
+    const items = JSON.parse(jsonMatch[0]);
+    return items.map((item: any, i: number) => ({
+      id: `gemini_${i}_${Date.now()}`,
+      name: String(item.name || query),
+      brand: null,
+      barcode: null,
+      externalId: null,
+      calories100g: Number(item.calories100g) || 0,
+      protein100g: Number(item.protein100g) || 0,
+      carbs100g: Number(item.carbs100g) || 0,
+      fat100g: Number(item.fat100g) || 0,
+      fiber100g: Number(item.fiber100g) || 0,
+      sugar100g: Number(item.sugar100g) || 0,
+      sodium100mg: Number(item.sodium100mg) || 0,
+      imageUrl: null,
+      isOrganic: false,
     }));
   } catch {
-    // Fallback to local DB
-    return prisma.food.findMany({
-      where: { name: { contains: query, mode: 'insensitive' } },
-      take: 20,
-    });
+    return local;
   }
 }
 
@@ -111,13 +126,12 @@ export async function getDiaryStatus(userId: string) {
 
   let message = '';
   if (remaining > 500) {
-    message = `You have ${remaining} calories remaining. Keep going—you're well under your goal.`;
+    message = `You have ${remaining} calories remaining. Keep going — you're well under your goal.`;
   } else if (remaining > 0) {
     message = `Almost there! You have ${remaining} calories left for today.`;
   } else {
     message = `You've hit your calorie goal for today. Great work!`;
   }
-
   if (totalBurned > 0) {
     message += ` You burned ${totalBurned} cal through exercise today.`;
   }
