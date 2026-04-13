@@ -52,11 +52,7 @@
       "expo-localization",
       [
         "expo-camera",
-        { "cameraPermission": "Allow HealthLifeHub to access your camera to analyze food." }
-      ],
-      [
-        "expo-barcode-scanner",
-        { "cameraPermission": "Allow HealthLifeHub to scan food barcodes." }
+        { "cameraPermission": "Allow HealthLifeHub to access your camera to analyze food and scan barcodes." }
       ]
     ],
     "experiments": {
