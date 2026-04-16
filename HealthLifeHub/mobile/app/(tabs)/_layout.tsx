@@ -1,4 +1,5 @@
 import { Tabs } from 'expo-router';
+import { Text } from 'react-native';
 import { COLORS } from '../../constants/theme';
 import { useTranslation } from '../../hooks/useTranslation';
 
@@ -32,5 +33,5 @@ export default function TabLayout() {
 }
 
 function TabIcon({ icon, color }: { icon: string; color: string }) {
-  return <span style={{ fontSize: 22, opacity: color === COLORS.primary ? 1 : 0.5 }}>{icon}</span>;
+  return <Text style={{ fontSize: 22, opacity: color === COLORS.primary ? 1 : 0.5 }}>{icon}</Text>;
 }
