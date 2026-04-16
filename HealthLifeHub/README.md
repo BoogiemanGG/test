@@ -169,3 +169,4 @@ All AI suggestions include the disclaimer: *"General wellness info only — not 
 - [ ] Phase 3: Invisible Log + weekly report + pantry expiry
 - [ ] Phase 4: Restaurant menu scanner + shopping list + family mode
 - [ ] Phase 5: IMU weighted walk + seasonal intel + AR cooking mode
+- [ ] Phase 6: Offline mode for core food logging + low-bandwidth photo analysis
