@@ -47,6 +47,36 @@ router.post('/register', [
   }
 });
 
+// POST /api/auth/google — sign in / register with a Google access token
+router.post('/google', async (req: Request, res: Response) => {
+  const { accessToken } = req.body;
+  if (!accessToken) return res.status(400).json({ error: 'accessToken required.' });
+  try {
+    // Verify token and fetch user info in one call
+    const gRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!gRes.ok) return res.status(401).json({ error: 'Invalid Google token.' });
+    const { id: googleId, email, name } = await gRes.json() as { id: string; email: string; name: string };
+
+    let user = await prisma.user.findFirst({ where: { OR: [{ googleId }, { email }] } });
+    if (!user) {
+      user = await prisma.user.create({
+        data: { email, name: name || email.split('@')[0], googleId, language: 'en' },
+      });
+      await prisma.userProfile.create({ data: { userId: user.id } });
+    } else if (!user.googleId) {
+      // Link Google to existing email/password account
+      user = await prisma.user.update({ where: { id: user.id }, data: { googleId } });
+    }
+    const token = jwt.sign({ userId: user.id, isPro: user.isPro }, process.env.JWT_SECRET!, { expiresIn: '30d' });
+    return res.json({ token, user: { id: user.id, email: user.email, name: user.name, isPro: user.isPro, language: user.language } });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Google authentication failed.' });
+  }
+});
+
 // POST /api/auth/login
 router.post('/login', [
   body('email').isEmail().normalizeEmail(),
@@ -58,7 +88,7 @@ router.post('/login', [
   const { email, password } = req.body;
   try {
     const user = await prisma.user.findUnique({ where: { email } });
-    if (!user || !(await bcrypt.compare(password, user.password))) {
+    if (!user || !user.password || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
     const token = jwt.sign(

@@ -58,6 +58,19 @@
     "experiments": {
       "typedRoutes": true
     },
-    "scheme": "healthlifehub"
+    "scheme": "healthlifehub",
+    "intentFilters": [
+      {
+        "action": "VIEW",
+        "autoVerify": true,
+        "data": [
+          {
+            "scheme": "healthlifehub",
+            "host": "auth"
+          }
+        ],
+        "category": ["BROWSABLE", "DEFAULT"]
+      }
+    ]
   }
 }

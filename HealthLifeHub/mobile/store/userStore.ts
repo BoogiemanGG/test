@@ -25,6 +25,7 @@ interface UserStore {
   isLoading: boolean;
 
   login: (email: string, password: string) => Promise<void>;
+  loginWithGoogle: (accessToken: string) => Promise<void>;
   register: (email: string, password: string, name: string, language?: string) => Promise<void>;
   logout: () => void;
   loadFromStorage: () => Promise<void>;
@@ -47,6 +48,15 @@ export const useUserStore = create<UserStore>((set, get) => ({
       // Refresh profile from server
       get().refreshProfile().catch(() => {});
     }
+  },
+
+  loginWithGoogle: async (accessToken: string) => {
+    set({ isLoading: true });
+    const { data } = await api.post('/auth/google', { accessToken });
+    await AsyncStorage.setItem('auth_token', data.token);
+    await AsyncStorage.setItem('user_profile', JSON.stringify(data.user));
+    api.defaults.headers.common['Authorization'] = `Bearer ${data.token}`;
+    set({ token: data.token, profile: data.user, isLoading: false });
   },
 
   login: async (email, password) => {

@@ -18,12 +18,13 @@ datasource db {
 model User {
   id         String   @id @default(uuid())
   email      String   @unique
-  password   String
+  password   String?  // nullable — Google-only accounts have no password
+  googleId   String?  @unique
   name       String
   avatarUrl  String?
   isPro      Boolean  @default(false)
   proExpiry  DateTime?
-  language   String   @default("en")  // user preferred language
+  language   String   @default("en")
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 

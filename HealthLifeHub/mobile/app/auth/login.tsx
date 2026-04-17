@@ -1,17 +1,37 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, Alert,
+  SafeAreaView, KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native';
 import { router } from 'expo-router';
+import * as Google from 'expo-auth-session/providers/google';
+import * as WebBrowser from 'expo-web-browser';
 import { useUserStore } from '../../store/userStore';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../constants/theme';
 
+WebBrowser.maybeCompleteAuthSession();
+
 export default function LoginScreen() {
-  const { login, isLoading } = useUserStore();
+  const { login, loginWithGoogle, isLoading } = useUserStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+
+  const [, googleResponse, promptGoogleAsync] = Google.useAuthRequest({
+    clientId: process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID,
+    scopes: ['profile', 'email'],
+  });
+
+  React.useEffect(() => {
+    if (googleResponse?.type === 'success') {
+      const accessToken = googleResponse.authentication?.accessToken;
+      if (accessToken) {
+        loginWithGoogle(accessToken)
+          .then(() => router.replace('/(tabs)'))
+          .catch(() => setError('Google sign-in failed. Please try again.'));
+      }
+    }
+  }, [googleResponse]);
 
   const handleLogin = async () => {
     setError('');
@@ -79,6 +99,20 @@ export default function LoginScreen() {
               <Text style={styles.buttonText}>{isLoading ? 'Signing in...' : 'Sign In'}</Text>
             </TouchableOpacity>
 
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>or</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            <TouchableOpacity
+              style={styles.googleButton}
+              onPress={() => promptGoogleAsync()}
+              disabled={isLoading}
+            >
+              <Text style={styles.googleButtonText}>🇬 Continue with Google</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity onPress={() => router.push('/auth/register')} style={styles.linkRow}>
               <Text style={styles.linkText}>
                 Don't have an account? <Text style={styles.link}>Create one</Text>
@@ -118,6 +152,15 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: { opacity: 0.6 },
   buttonText: { color: '#fff', fontSize: FONTS.sizes.md, fontWeight: '700' },
+  dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: SPACING.sm },
+  dividerLine: { flex: 1, height: 1, backgroundColor: COLORS.border },
+  dividerText: { color: COLORS.textMuted, fontSize: FONTS.sizes.xs, marginHorizontal: SPACING.sm },
+  googleButton: {
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
+    backgroundColor: '#fff', borderRadius: RADIUS.md,
+    paddingVertical: SPACING.md, borderWidth: 1, borderColor: COLORS.border,
+  },
+  googleButtonText: { color: '#1a1a1a', fontSize: FONTS.sizes.base, fontWeight: '600' },
   linkRow: { alignItems: 'center', marginTop: SPACING.sm },
   linkText: { color: COLORS.textMuted, fontSize: FONTS.sizes.sm },
   link: { color: COLORS.primary, fontWeight: '600' },
